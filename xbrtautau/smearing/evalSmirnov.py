@@ -1,0 +1,369 @@
+#import BRTmass
+import tau
+from ROOT import *
+import math
+import collinearmass
+import smirnov
+
+smir_mass=125
+recoTree=TChain('PowPyth8_AU2CT10_ggH150_tautauhh_mc12a')
+recoTree.Add('/cluster/data11/endw/ntuples/prod_v29/hhskim/hhskim.root')
+smTree=TChain('Tree')
+smTree.Add('/cluster/data04/mquennev/higgs/rootfiles/met/Hmass150.root')
+
+smirnovFile=TFile('smirnov_curves/smirnov_'+str(smir_mass)+'.root')
+smirnovGraph_par=smirnovFile.Get('sm_reco_smirnov_par')
+smirnovGraph_perp=smirnovFile.Get('sm_reco_smirnov_perp')
+
+applycuts=False
+
+recoEntries=recoTree.GetEntries()
+#recoEntries=10000
+smEntries=smTree.GetEntries()
+#smEntries=10000
+
+tv2_Tau1=TVector2()
+tv2_Tau2=TVector2()
+tv2_diTau=TVector2()
+tv2_MET=TVector2()
+
+tv2_Yax=TVector2()
+tv2_Xax=TVector2()
+
+tv2_Par=TVector2()
+tv2_Perp=TVector2()
+
+Tau1_4vect=TLorentzVector()
+Tau2_4vect=TLorentzVector()
+MET_2vect=TVector2()
+
+recoPar=TH1F('recoPar','',25,-150,150)
+recoPerp=TH1F('recoPerp','',25,-150,150)
+recoPar.SetLineColor(kRed)
+recoPerp.SetLineColor(kRed)
+recoPar.SetFillStyle(4000)
+recoPerp.SetFillStyle(4000)
+
+smPar=TH1F('smPar','',25,-150,150)
+smPerp=TH1F('smPerp','',25,-150,150)
+smPar.SetLineColor(kBlue)
+smPerp.SetLineColor(kBlue)
+smPar.SetFillStyle(4000)
+smPerp.SetFillStyle(4000)
+
+truthPar=TH1F('truthPar','',25,-150,150)
+truthPerp=TH1F('truthPerp','',25,-150,150)
+truthPar.SetLineColor(kGreen)
+truthPerp.SetLineColor(kGreen)
+truthPar.SetFillStyle(4000)
+truthPerp.SetFillStyle(4000)
+
+recoPar_cuts=TH1F('recoPar_cuts','',25,-150,150)
+recoPerp_cuts=TH1F('recoPerp_cuts','',25,-150,150)
+recoPar_cuts.SetLineColor(kRed)
+recoPerp_cuts.SetLineColor(kRed)
+recoPar_cuts.SetFillStyle(4000)
+recoPerp_cuts.SetFillStyle(4000)
+
+smPar_cuts=TH1F('smPar_cuts','',25,-150,150)
+smPerp_cuts=TH1F('smPerp_cuts','',25,-150,150)
+smPar_cuts.SetLineColor(kBlue)
+smPerp_cuts.SetLineColor(kBlue)
+smPar_cuts.SetFillStyle(4000)
+smPerp_cuts.SetFillStyle(4000)
+
+truthPar_cuts=TH1F('truthPar_cuts','',25,-150,150)
+truthPerp_cuts=TH1F('truthPerp_cuts','',25,-150,150)
+truthPar_cuts.SetLineColor(kGreen)
+truthPerp_cuts.SetLineColor(kGreen)
+truthPar_cuts.SetFillStyle(4000)
+truthPerp_cuts.SetFillStyle(4000)
+
+def passedTauCuts(pt,eta,ntrack):
+    return pt>20000 and (abs(eta)<1.37 or 1.52<abs(eta)<2.5) and (ntrack==1 or ntrack==3)
+
+def passedPreselection(v):
+    return v['lep1_pt'][4]>35000 and v['lep2_pt'][4]>25000 and 0.8<v['dR_lep_lep'][4]<2.6 and (v['met_phi_centrality'][4]>1 or min(v['dphi_lep1_met'][4],v['dphi_lep2_met'][4])<0.4*math.pi) and v['met_et'][4]>20000
+
+def getMetPhiCentrality(Tau1_phi,Tau2_phi,MET_phi):
+    A=math.sin(MET_phi-Tau1_phi)/math.sin(Tau2_phi-Tau1_phi)
+    B=math.sin(Tau2_phi-MET_phi)/math.sin(Tau2_phi-Tau1_phi)
+    return (A+B)/math.sqrt(A**2+B**2)
+
+def deltaPhi(phi1,phi2):
+    dphi=abs(phi1-phi2)
+    while dphi>math.pi:
+        dphi=dphi-2*math.pi
+    return abs(dphi)
+
+def evalVariable(var_name,Tau1,Tau2,met_px,met_py):
+    #When adding new variables, they must be added to this function
+    if var_name=='lep1_pt':
+        return Tau1.pt
+    if var_name=='lep1_eta':
+        return Tau1.eta
+    if var_name=='lep2_pt':
+        return Tau2.pt
+    if var_name=='lep2_eta':
+        return Tau2.eta
+    if var_name=='met_et':
+        return math.sqrt(met_px**2+met_py**2)
+    if var_name=='transverse_mass_lep1_lep2':
+        return math.sqrt(2*Tau1.pt*Tau2.pt*(1.-math.cos(deltaPhi(Tau1.phi,Tau2.phi))))
+    if var_name=='transverse_mass_lep1_met':
+        return math.sqrt(2*Tau1.pt*math.sqrt(met_px**2+met_py**2)*(1.-math.cos(deltaPhi(Tau1.phi,math.atan2(met_py,met_px)))))   
+    if var_name=='transverse_mass_lep2_met':
+        return math.sqrt(2*Tau2.pt*math.sqrt(met_px**2+met_py**2)*(1.-math.cos(deltaPhi(Tau2.phi,math.atan2(met_py,met_px)))))
+    if var_name=='dphi_lep1_met':
+        return deltaPhi(Tau1.phi,math.atan2(met_py,met_px))
+    if var_name=='dphi_lep2_met':
+        return deltaPhi(Tau2.phi,math.atan2(met_py,met_px))
+    if var_name=='dphi_lep_lep':
+        return deltaPhi(Tau1.phi,Tau2.phi)
+    if var_name=='deta_lep_lep':
+        return abs(Tau1.eta-Tau2.eta)
+    if var_name=='dR_lep_lep':
+        return math.sqrt((Tau1.eta-Tau2.eta)**2+deltaPhi(Tau1.phi,Tau2.phi)**2)
+    if var_name=='ptsum_lep1_lep2_met':
+        return Tau1.pt+Tau2.pt+math.sqrt(met_px**2+met_py**2)
+    if var_name=='ptsum_lep1_lep2':
+        return Tau1.pt+Tau2.pt
+    if var_name=='pttot_lep1_lep2_met':
+        return math.sqrt((Tau1.px+Tau2.px+met_px)**2+(Tau1.py+Tau2.py+met_py)**2)/(Tau1.pt+Tau2.pt+math.sqrt(met_px**2+met_py**2))
+    if var_name=='pttot_lep1_lep2':
+        return math.sqrt((Tau1.px+Tau2.px)**2+(Tau1.py+Tau2.py)**2)/(Tau1.pt+Tau2.pt)
+    if var_name=='ptdiff_lep1_lep2':
+        return math.sqrt((Tau1.px-Tau2.px)**2+(Tau1.py-Tau2.py)**2)/(Tau1.pt+Tau2.pt)
+    if var_name=='met_phi_centrality':
+        return getMetPhiCentrality(Tau1.phi,Tau2.phi,math.atan2(met_py,met_px))
+    if var_name=='collinear_mass':
+        return collinearmass.mass(Tau1,Tau2,met_px,met_py)[1]
+    if var_name=='resonance_pt':
+        return TVector2(Tau1.px+Tau2.px+met_px,Tau1.py+Tau2.py+met_py).Mod()
+    print "Error, unknown variable name. Variable must be added to evalVariable function."
+    return 0
+
+variables = {}
+variables['lep1_pt']                   = ['MeV','F',  0.00,9999999,0.,TBranch(),   0.00,200000., 25]
+variables['lep1_eta']                  = [''   ,'F',-10.00,10.00,  0.,TBranch(), -2.5,2.5,   40]
+variables['lep2_pt']                   = ['MeV','F',  0.00,9999999,0.,TBranch(),   0.00,200000., 25]
+variables['lep2_eta']                  = [''   ,'F',-10.00,10.00,  0.,TBranch(), -2.5,2.5,   40]
+variables['met_et']                    = ['MeV','F',  0.00,9999999,0.,TBranch(),   0.00,200000., 25]
+variables['transverse_mass_lep1_lep2'] = ['MeV','F',  0.00,9999999,0.,TBranch(),   0.00,250000., 40]
+variables['transverse_mass_lep1_met']  = ['MeV','F',  0.00,9999999,0.,TBranch(),   0.00,250000., 40]
+variables['transverse_mass_lep2_met']  = ['MeV','F',  0.00,9999999,0.,TBranch(),   0.00,250000., 40]
+variables['dphi_lep1_met']             = ['rad','F',  0.00, 3.15,  0.,TBranch(),   0.00, 3.15,   20]
+variables['dphi_lep2_met']             = ['rad','F',  0.00, 3.15,  0.,TBranch(),   0.00, 3.15,   20]
+variables['dphi_lep_lep']              = ['rad','F',  0.00, 3.15,  0.,TBranch(),   0.00, 3.15,   20]
+variables['deta_lep_lep']              = ['',   'F',  0.00,20.00,  0.,TBranch(),   0.00,3.15,   40]
+variables['dR_lep_lep']                = ['',   'F',  0.00,25.00,  0.,TBranch(),   0.00,3.15,   40]
+variables['ptsum_lep1_lep2_met']       = ['MeV','F',  0.00,9999999,0.,TBranch(),   0.00,300000., 30]
+variables['ptsum_lep1_lep2']           = ['MeV','F',  0.00,9999999,0.,TBranch(),   0.00,250000., 25]
+variables['pttot_lep1_lep2_met']       = ['',   'F',  0.00, 2.00,  0.,TBranch(),   0.00, 1.10,   22]
+variables['pttot_lep1_lep2']           = ['',   'F',  0.00, 2.00,  0.,TBranch(),   0.00, 1.10,   22]
+variables['ptdiff_lep1_lep2']          = ['',   'F',  0.00, 2.00,  0.,TBranch(),   0.00, 1.10,   22]
+variables['met_phi_centrality']        = ['',   'F', -1.45, 1.45,  0.,TBranch(),  -1.45, 1.45,   40]
+variables['collinear_mass']            = ['',   'F', 0.00, 9999999,0.,TBranch(),   0.00,200000., 40]
+
+
+print recoEntries
+for i in xrange(recoEntries):
+    if i%10000==0:
+    	print i
+    ientry=recoTree.LoadTree(i)
+    if ientry<0:
+   	break
+    nb=recoTree.GetEntry(i)
+    if nb<=0:
+    	continue
+    Tau1_numTrack=recoTree.tau1_numTrack
+    Tau2_numTrack=recoTree.tau2_numTrack
+    if Tau1_numTrack==1:
+    	Tau1_4vect.SetPtEtaPhiM(recoTree.tau1_pt,recoTree.tau1_eta,recoTree.tau1_phi,800.)
+    elif Tau1_numTrack==3:
+        Tau1_4vect.SetPtEtaPhiM(recoTree.tau1_pt,recoTree.tau1_eta,recoTree.tau1_phi,1200.)
+    if Tau2_numTrack==1:
+    	Tau2_4vect.SetPtEtaPhiM(recoTree.tau2_pt,recoTree.tau2_eta,recoTree.tau2_phi,800.)
+    elif Tau2_numTrack==3:
+    	Tau2_4vect.SetPtEtaPhiM(recoTree.tau2_pt,recoTree.tau2_eta,recoTree.tau2_phi,1200.)
+    Tau1=tau.Tau(Tau1_4vect,Tau1_numTrack)
+    Tau2=tau.Tau(Tau2_4vect,Tau2_numTrack)
+    MET_2vect.SetMagPhi(recoTree.MET_et,recoTree.MET_phi)
+    for k,v in variables.iteritems():
+    	variables[k][4]=evalVariable(k,Tau1,Tau2,MET_2vect.Px(),MET_2vect.Py())
+    tv2_Tau1.SetMagPhi(recoTree.tau1_pt,recoTree.tau1_phi)
+    tv2_Tau2.SetMagPhi(recoTree.tau2_pt,recoTree.tau2_phi)
+    tv2_diTau=tv2_Tau1+tv2_Tau2
+
+    tv2_Yax.SetMagPhi(1.,tv2_diTau.Phi())
+    
+    tv2_Xax=(tv2_Tau1-tv2_Tau1.Proj(tv2_diTau)).Unit()
+    #tv2_Xax.SetMagPhi(1.,tv2_diTau.Phi()-math.pi/2)
+
+    tv2_MET.SetMagPhi(recoTree.MET_et,recoTree.MET_phi)
+    tv2_Par=tv2_MET.Proj(tv2_Yax)
+    tv2_Perp=tv2_MET.Proj(tv2_Xax)
+    if passedTauCuts(recoTree.tau1_pt,recoTree.tau1_eta,Tau1_numTrack) and passedTauCuts(recoTree.tau2_pt,recoTree.tau2_eta,Tau2_numTrack) and passedPreselection(variables):
+        recoPar_cuts.Fill(tv2_Par*tv2_Yax/1000.)
+        recoPerp_cuts.Fill(tv2_Perp*tv2_Xax/1000.)
+    recoPar.Fill(tv2_Par*tv2_Yax/1000.)
+    recoPerp.Fill(tv2_Perp*tv2_Xax/1000.)
+
+print smEntries
+for i in xrange(smEntries):
+    if i%10000==0:
+    	print i
+    ientry=smTree.LoadTree(i)
+    if ientry<0:
+   	break
+    nb=smTree.GetEntry(i)
+    if nb<=0:
+    	continue
+    #Truth
+    variables['lep1_pt'][4] = Tree.lep1_pt
+    variables['lep1_eta'][4] = Tree.lep1_eta
+    variables['lep2_pt'][4] = Tree.lep2_pt
+    variables['lep2_eta'][4] = Tree.lep2_eta
+    variables['met_et'][4] = Tree.met_et
+    variables['transverse_mass_lep1_lep2'][4] = Tree.transverse_mass_lep1_lep2
+    variables['transverse_mass_lep1_met'][4] = Tree.transverse_mass_lep1_met
+    variables['transverse_mass_lep2_met'][4] = Tree.transverse_mass_lep2_met
+    variables['dphi_lep1_met'][4] = Tree.dphi_lep1_met
+    variables['dphi_lep2_met'][4] = Tree.dphi_lep2_met
+    variables['dphi_lep_lep'][4] = Tree.dphi_lep_lep
+    variables['deta_lep_lep'][4] = Tree.deta_lep_lep
+    variables['dR_lep_lep'][4] = Tree.dR_lep_lep
+    variables['ptsum_lep1_lep2_met'][4] = Tree.ptsum_lep1_lep2_met
+    variables['ptsum_lep1_lep2'][4] = Tree.ptsum_lep1_lep2
+    variables['pttot_lep1_lep2_met'][4] = Tree.pttot_lep1_lep2_met
+    variables['pttot_lep1_lep2'][4] = Tree.pttot_lep1_lep2
+    variables['ptdiff_lep1_lep2'][4] = Tree.ptdiff_lep1_lep2
+    variables['met_phi_centrality'][4] = Tree.met_phi_centrality
+    variables['collinear_mass'][4] = -1.
+
+    tv2_Tau1.SetMagPhi(smTree.lep1_pt,smTree.lep1_phi)
+    tv2_Tau2.SetMagPhi(smTree.lep2_pt,smTree.lep2_phi)
+    tv2_diTau=tv2_Tau1+tv2_Tau2
+
+    tv2_Yax.SetMagPhi(1.,tv2_diTau.Phi())
+    tv2_Xax=(tv2_Tau1-tv2_Tau1.Proj(tv2_diTau)).Unit()
+    #tv2_Xax.SetMagPhi(1.,tv2_diTau.Phi()-math.pi/2)
+
+    tv2_MET.SetMagPhi(smTree.met_et,smTree.met_phi)
+    tv2_Par=tv2_MET.Proj(tv2_Yax)
+    tv2_Perp=tv2_MET.Proj(tv2_Xax)
+    if passedTauCuts(variables['lep1_pt'][4],variables['lep1_eta'][4],1) and passedTauCuts(variables['lep2_pt'][4],variables['lep2_eta'][4],1) and passedPreselection(variables):
+    	truthPar_cuts.Fill(tv2_Par*tv2_Yax/1000.)
+    	truthPerp_cuts.Fill(tv2_Perp*tv2_Xax/1000.)
+    truthPar.Fill(tv2_Par*tv2_Yax/1000.)
+    truthPerp.Fill(tv2_Perp*tv2_Xax/1000.)
+
+    #Smeared
+    
+    variables['lep1_pt'][4] = Tree.lep1_pt_sm
+    variables['lep1_eta'][4] = Tree.lep1_eta_sm
+    variables['lep2_pt'][4] = Tree.lep2_pt_sm
+    variables['lep2_eta'][4] = Tree.lep2_eta_sm
+    variables['met_et'][4] = Tree.met_et_sm
+    variables['transverse_mass_lep1_lep2'][4] = Tree.transverse_mass_lep1_lep2_sm
+    variables['transverse_mass_lep1_met'][4] = Tree.transverse_mass_lep1_met_sm
+    variables['transverse_mass_lep2_met'][4] = Tree.transverse_mass_lep2_met_sm
+    variables['dphi_lep1_met'][4] = Tree.dphi_lep1_met_sm
+    variables['dphi_lep2_met'][4] = Tree.dphi_lep2_met_sm
+    variables['dphi_lep_lep'][4] = Tree.dphi_lep_lep_sm
+    variables['deta_lep_lep'][4] = Tree.deta_lep_lep_sm
+    variables['dR_lep_lep'][4] = Tree.dR_lep_lep_sm
+    variables['ptsum_lep1_lep2_met'][4] = Tree.ptsum_lep1_lep2_met_sm
+    variables['ptsum_lep1_lep2'][4] = Tree.ptsum_lep1_lep2_sm
+    variables['pttot_lep1_lep2_met'][4] = Tree.pttot_lep1_lep2_met_sm
+    variables['pttot_lep1_lep2'][4] = Tree.pttot_lep1_lep2_sm
+    variables['ptdiff_lep1_lep2'][4] = Tree.ptdiff_lep1_lep2_sm
+    variables['met_phi_centrality'][4] = Tree.met_phi_centrality_sm
+    variables['collinear_mass'][4] = Tree.collinear_mass_sm
+    tv2_Tau1.SetMagPhi(smTree.lep1_pt_sm,smTree.lep1_phi_sm)
+    tv2_Tau2.SetMagPhi(smTree.lep2_pt_sm,smTree.lep2_phi_sm)
+    tv2_diTau=tv2_Tau1+tv2_Tau2
+    
+    tv2_Yax.SetMagPhi(1.,tv2_diTau.Phi())
+    tv2_Xax=(tv2_Tau1-tv2_Tau1.Proj(tv2_diTau)).Unit()
+    #tv2_Xax.SetMagPhi(1.,tv2_diTau.Phi()-math.pi/2)
+
+    tv2_MET.SetMagPhi(smTree.met_et_sm,smTree.met_phi_sm)
+    tv2_Par=tv2_MET.Proj(tv2_Yax)
+    tv2_Perp=tv2_MET.Proj(tv2_Xax)
+    if passedTauCuts(variables['lep1_pt'][4],variables['lep1_eta'][4],1) and passedTauCuts(variables['lep2_pt'][4],variables['lep2_eta'][4],1) and passedPreselection(variables):
+	
+    	smPar_cuts.Fill(smirnovGraph_par.Eval(tv2_Par*tv2_Yax/1000.))
+    	smPerp_cuts.Fill(smirnovGraph_perp.Eval(tv2_Perp*tv2_Xax/1000.))
+    smPar.Fill(smirnovGraph_par.Eval(tv2_Par*tv2_Yax/1000.))
+    smPerp.Fill(smirnovGraph_perp.Eval(tv2_Perp*tv2_Xax/1000.))
+
+ParStack=THStack()
+PerpStack=THStack()
+
+ParStack_cuts=THStack()
+PerpStack_cuts=THStack()
+
+recoPar.Scale(1/recoPar.GetEntries())
+recoPerp.Scale(1/recoPerp.GetEntries())
+truthPar.Scale(1/truthPar.GetEntries())
+truthPerp.Scale(1/truthPerp.GetEntries())
+smPar.Scale(1/smPar.GetEntries())
+smPerp.Scale(1/smPerp.GetEntries())
+
+recoPar_cuts.Scale(1/recoPar_cuts.GetEntries())
+recoPerp_cuts.Scale(1/recoPerp_cuts.GetEntries())
+truthPar_cuts.Scale(1/truthPar_cuts.GetEntries())
+truthPerp_cuts.Scale(1/truthPerp_cuts.GetEntries())
+smPar_cuts.Scale(1/smPar_cuts.GetEntries())
+smPerp_cuts.Scale(1/smPerp_cuts.GetEntries())
+
+ParStack.Add(recoPar)
+ParStack.Add(truthPar)
+ParStack.Add(smPar)
+
+PerpStack.Add(recoPerp)
+PerpStack.Add(truthPerp)
+PerpStack.Add(smPerp)
+
+ParStack_cuts.Add(recoPar_cuts)
+ParStack_cuts.Add(truthPar_cuts)
+ParStack_cuts.Add(smPar_cuts)
+
+PerpStack_cuts.Add(recoPerp_cuts)
+PerpStack_cuts.Add(truthPerp_cuts)
+PerpStack_cuts.Add(smPerp_cuts)
+
+canvas=TCanvas()
+
+legend=TLegend(0.7,0.7,0.9,0.9)
+legend.AddEntry(recoPar,"Reco level")
+legend.AddEntry(smPar,"Smeared")
+legend.AddEntry(truthPar,"Truth level")
+
+ParStack.Draw('nostack')
+legend.Draw('same')
+ParStack.GetXaxis().SetTitle("MET_parallel (GeV)")
+ParStack.SetTitle("Component of MET along ditau direction")
+canvas.SaveAs('projections/par.png')
+canvas.Clear()
+PerpStack.Draw('nostack')
+legend.Draw('same')
+PerpStack.GetXaxis().SetTitle("MET_perpendicular (GeV)")
+PerpStack.SetTitle("Component of MET perpendicular to ditau direction")
+canvas.SaveAs('projections/perp.png')
+canvas.Clear()
+
+ParStack_cuts.Draw('nostack')
+legend.Draw('same')
+ParStack_cuts.GetXaxis().SetTitle("MET_parallel (GeV)")
+ParStack_cuts.SetTitle("Component of MET along ditau direction (after cuts)")
+canvas.SaveAs('projections/par_cuts.png')
+canvas.Clear()
+PerpStack_cuts.Draw('nostack')
+legend.Draw('same')
+PerpStack_cuts.GetXaxis().SetTitle("MET_perpendicular (GeV)")
+PerpStack_cuts.SetTitle("Component of MET perpendicular to ditau direction (after cuts)")
+canvas.SaveAs('projections/perp_cuts.png')
+canvas.Clear()
+smirnovFile.Close()

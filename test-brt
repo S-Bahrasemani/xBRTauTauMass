@@ -1,0 +1,328 @@
+#!/usr/bin/env python
+import os 
+import logging
+import math
+import datetime
+import shutil
+ 
+# rootpy/ROOT imports
+import rootpy
+from rootpy.extern.argparse import ArgumentParser
+from rootpy.plotting.style import set_style
+from rootpy.plotting import Hist, Canvas, Graph
+
+#from rootpy.plotting.core.style import Color, LineStyle, FillStyle, MarkerStyle
+import ROOT
+
+
+# local imports
+from brtautau.samples import Higgs
+from brtautau.samples.higgs import * 
+from brtautau.categories.mva import *
+from brtautau.plotting.reco_ploter import *
+# setup the logging
+
+log = logging.getLogger(os.path.basename(__file__))
+
+my_datetime = datetime.date.today()
+my_datetime = my_datetime.strftime("%m%d%Y")
+
+# setup the argument parser
+parser = ArgumentParser()
+parser.add_argument('--mode', type=str, default='VBF', choices=['VBF', 'gg', 'mix'])
+parser.add_argument('--level', type = str , default = 'truth', choices = ['truth', 'reco'])
+parser.add_argument('--channel', type = str , default = 'hadhad', choices = ['hadhad','lephad', 'leplep'])
+parser.add_argument('--TrainMode', type=str, default='VBF', choices=['VBF', 'gg', 'mix'])
+args = parser.parse_args()
+
+
+set_style('ATLAS', shape='rect')
+# iterate over the masses and plot the lineshape
+
+#####################  SETTINGS  ####################
+
+if args.level == 'truth' and args.channel =='lephad':
+    if args.TrainMode == 'VBF':
+        NtuplesPath_H = NTUPLE_PATH + '/TRUTH-H/with_LH_VBF_train'
+
+if args.level == 'truth' and args.channel =='lephad':
+    if args.TrainMode == 'gg':
+        NtuplesPath_H = NTUPLE_PATH + '/TRUTH-H/with_LH_gg_train'
+
+
+
+if args.level == 'reco' and args.channel =='hadhad':
+    if args.TrainMode == 'gg':
+        NtuplesPath_H = NTUPLE_PATH + "/HADHAD/H/weighted_gg_train"
+        NtuplesPath_Z = NTUPLE_PATH + "/HADHAD/Z/weighted_gg_train"
+    elif  args.TrainMode == 'VBF':
+        NtuplesPath_H = NTUPLE_PATH + "/HADHAD/H/weighted_VBF_train"
+        NtuplesPath_Z = NTUPLE_PATH + "/HADHAD/Z/weighted_VBF_train"
+
+if args.level == 'reco' and args.channel =='lephad':
+    if  args.TrainMode == 'gg':
+        NtuplesPath_H = NTUPLE_PATH + "/LEPHAD/H/weighted_gg_train"
+        NtuplesPath_Z = NTUPLE_PATH + "/LEPHAD/Z/weighted_gg_train"
+    elif  args.TrainMode == 'VBF':
+        NtuplesPath_H = NTUPLE_PATH + "/LEPHAD/H/weighted_VBF_train"
+        NtuplesPath_Z = NTUPLE_PATH + "/LEPHAD/Z/weighted_VBF_train"
+
+
+
+cuts = Cut('lephad==1')
+
+if args.channel == 'lephad' and args.level == 'reco' and args.mode =='VBF':
+    cuts = Category_VBF.cuts_lh
+if args.channel == 'lephad' and args.level =='reco' and args.mode =='gg':
+    cuts = Category_Boosted.cuts_lh
+
+
+if args.channel == 'hadhad' and args.level == 'reco' and args.mode =='VBF':
+    cuts = Category_VBF.cuts
+if args.channel == 'hadhad' and args.level =='reco' and args.mode =='gg':
+    cuts = Category_Boosted.cuts
+  
+
+if args.level == 'truth':
+    Masses = Higgs.MASSES
+
+elif args.level =='reco':
+    Masses = range(100, 155, 5)
+
+
+Estimators_Hists={}
+Estimators_Hists_Mean={}
+Estimators_Hists_MeanError={}
+Estimators_Hists_RMS={}
+Estimators_Hists_RMSError={}
+
+brt_means=[]
+brt_mean_errors=[]
+brt_rms=[]
+brt_rms_error=[]
+
+
+for mass in Masses:
+    # instantiate a Higgs sample at a given mass
+    higgs = Higgs(ntuple_path = NtuplesPath_H ,tree_name ='Tree', mass=mass,level = args.level,  mode=args.mode)
+
+    # Declare and fill the hist dict for the BRT, MMC, Coll mass
+    brt_hist = {'0.001*brt_mass': Hist(30, 0, 250)}
+    brt_hist = higgs.get_hist_array(brt_hist, cuts = cuts)
+
+    # Declare the BRT mass histogram                                                 
+    hist_BRT = brt_hist['0.001*brt_mass']
+    hist_BRT.xaxis.title = 'BRT Mass [GeV]'
+    # plot the lineshape
+    c = Canvas()
+    hist_BRT.Draw('HIST')
+    lat = ROOT.TLatex(
+        c.GetLeftMargin() + 0.05,
+        1 - c.GetTopMargin() - 0.05,
+        '{0}-{1}H#rightarrow#tau#tau @ {2} GeV -- {3}'.format(args.level, args.mode, mass, args.channel))
+    lat.SetNDC(True)
+    lat.SetTextSize(22)
+    lat.Draw()
+    c.SaveAs('./plots/' + str(args.channel)+ '/'+str(my_datetime)+'-lineshape_{0}_{1}_{2}.png'.format(args.level, args.mode, mass))
+
+    #log.info('-- m(H) = %s: m(BRT) = %s, res = %s' % (mass, hist_BRT.GetMean(), hist_BRT.GetRMS()))
+
+    brt_means.append(hist_BRT.GetMean())
+    brt_mean_errors.append(hist_BRT.GetMeanError())
+    brt_rms.append(hist_BRT.GetRMS())
+    brt_rms_error.append(hist_BRT.GetRMSError())
+    
+    if args.level == 'reco':
+
+        brt_hist = {'0.001*brt_mass': Hist(30, 0, 250)} ## careful scales are different for hadhad and lephad
+        brt_hist = higgs.get_hist_array(brt_hist, cuts=cuts)
+        hist_BRT=brt_hist['0.001*brt_mass']
+
+        
+        mmc_hist = {'0.001*mmc1_resonance_m': Hist(30, 0, 250)} ## careful scales are different for hadhad and lephad
+        mmc_hist = higgs.get_hist_array(mmc_hist, cuts=cuts)
+        hist_MMC=mmc_hist['0.001*mmc1_resonance_m']
+
+        coll_hist = {'0.001*mass_collinear_tau1_tau2': Hist(30, 0, 250)}
+        coll_hist = higgs.get_hist_array(coll_hist, cuts=cuts)
+        hist_Coll = coll_hist['0.001*mass_collinear_tau1_tau2']
+        #log.info('--m(H) = %s: m(MMC) = %s , res = %s' % (mass, hist_MMC.GetMean(), hist_MMC.GetRMS()))
+        Estimators_Hists[mass]= [hist_BRT, hist_MMC, hist_Coll]
+
+        Estimators_Hists_Mean[mass]= [hist_BRT.GetMean(), hist_MMC.GetMean(), hist_Coll.GetMean()]
+        Estimators_Hists_MeanError[mass]= [hist_BRT.GetMeanError(), hist_MMC.GetMeanError(), hist_Coll.GetMeanError()]
+        
+        Estimators_Hists_RMS[mass]= [hist_BRT.GetRMS(), hist_MMC.GetRMS(), hist_Coll.GetRMS()]
+        Estimators_Hists_RMSError[mass]= [hist_BRT.GetRMSError(), hist_MMC.GetRMSError(), hist_Coll.GetRMSError()]
+        
+
+
+
+############# RECO PLOTS BLOCK #############
+
+
+## Build the reco curves for mass estimators comparison:
+
+if args.level== 'reco':
+    reco_plotter(Estimators_Hists,Estimators_Hists_Mean, Estimators_Hists_MeanError, Estimators_Hists_RMS,
+                 Estimators_Hists_RMSError, masses=Masses, date=my_datetime, level=args.level, mode=args.mode, channel= args.channel)
+    
+
+    #### CREATING ROC CURVES: H(acceptance)- Z(rejection)
+
+    ## Dumy Z masses only for consistency with Higgs class (will be changed)
+
+    ZMasses = [80, 85, 90, 95, 100]
+    Z_hists_temp = []
+    for mass in ZMasses:
+        Zboson = Higgs(ntuple_path = NtuplesPath_Z, tree_name ='Tree', mode = 'Z', mass = mass, level = 'reco')
+        # Declare and fill the hist dict for the BRT, MMC, Coll mass
+        brt_hist = {'0.001*brt_mass': Hist(30, 0, 250)}
+        brt_hist = Zboson.get_hist_array(brt_hist, cuts = cuts)
+        # Declare the BRT mass histogram                                                 
+        hist_BRT = brt_hist['0.001*brt_mass']
+
+        mmc_hist = {'0.001*mmc1_resonance_m': Hist(30, 0, 250)}
+        mmc_hist = Zboson.get_hist_array(mmc_hist, cuts=cuts)
+        hist_MMC=mmc_hist['0.001*mmc1_resonance_m']
+
+        coll_hist = {'0.001*mass_collinear_tau1_tau2': Hist(30, 0, 250)}
+        coll_hist = Zboson.get_hist_array(coll_hist, cuts=cuts)
+        hist_Coll = coll_hist['0.001*mass_collinear_tau1_tau2']
+      
+        Z_hists_temp.append([hist_BRT, hist_MMC,hist_Coll])    
+    for i in range(1,5):
+        for j in range(3):
+            Z_hists_temp[0][j].Add(Z_hists_temp[i][j])
+    
+    Z_hists_Nor = [Z_hists_temp[0][0].Clone("hist_BRT"), Z_hists_temp[0][1].Clone("hist_MMC"), Z_hists_temp[0][2].Clone("hist_Coll")]
+    [Z_hists_Nor[i].Scale(1./Z_hists_Nor[i].Integral()) for i in range(3)]
+    Z_hists = Z_hists_Nor
+        
+    H125_hists_temp = Estimators_Hists[125]
+    H125_hists = [H125_hists_temp[0].Clone("hist_BRT"), H125_hists_temp[1].Clone("hist_MMC"), H125_hists_temp[2].Clone("hist_Coll")]
+    [H125_hists[i].Scale(1./H125_hists[i].Integral()) for i in range(3)]
+    
+### Higgs Normalized Hists
+    Estimators_Hists_Nor = {}
+    for mass in Masses:
+        hist_temp = Estimators_Hists[mass]
+        hist = [hist_temp[0].Clone("hist_BRT"), hist_temp[1].Clone("hist_MMC"), hist_temp[2].Clone("hist_Coll")]
+        [hist[i].Scale(1./hist[i].Integral()) for i in range(3)]
+    
+        Estimators_Hists_Nor [mass]= hist
+
+
+    roc_plotter(H_Hists = Estimators_Hists_Nor, Z_Hist = Z_hists , channel = args.channel, mode = args.mode, date =my_datetime)
+ 
+# Build the BRT-calibration curve
+gr_calib = Graph(len(brt_means))
+for i, (true, brt) in enumerate(zip(Higgs.MASSES, brt_means)):
+    gr_calib.SetPoint(i, true, brt)
+gr_calib.xaxis.title = 'True Higgs Mass [GeV]'
+gr_calib.yaxis.title = 'Mean of BRT Mass [GeV]'
+
+# Draw the BRT-calibration curve
+c = Canvas()
+gr_calib.Draw('AP')
+
+
+lat = ROOT.TLatex(
+    c.GetLeftMargin() + 0.05,
+    1 - c.GetTopMargin() - 0.05,
+    '{0}-{1}#rightarrowH#rightarrow#tau#tau'.format(args.level,args.mode))
+lat.SetNDC(True)
+lat.SetTextSize(22)
+lat.Draw()
+c.SaveAs('plots/'+ str(args.channel)+'/'+str(my_datetime)+'Calibration_{0}_{1}.png'.format(args.level, args.mode))
+
+
+# Build the Linear fit curve
+gr_calib = Graph(len(brt_means))
+for i, (true, brt) in enumerate(zip(Higgs.MASSES, brt_means)):
+    gr_calib.SetPoint(i, true, brt)
+gr_calib.xaxis.title = 'True Higgs Mass [GeV]'
+gr_calib.yaxis.title = 'Mean of BRT Mass [GeV]'
+
+fitmin = Higgs.MASSES[0] + 20
+fitmax = Higgs.MASSES[-1] -20
+flin2 = ROOT.TF1('flin2','[0]+[1]*x',fitmin-0.1,fitmax+0.1)
+flin2.SetLineColor(4)
+gr_calib.Fit(flin2,'RS','',fitmin-0.1,fitmax+0.1)
+intercept2 = flin2.GetParameter(0)
+slope2     = flin2.GetParameter(1)
+
+c = Canvas()
+gr_calib.Draw('AP')
+
+lat = ROOT.TLatex(
+    c.GetLeftMargin() + 0.05,
+    1 - c.GetTopMargin() - 0.05,
+    '{0}-{1}#rightarrowH#rightarrow#tau#tau'.format(args.level,args.mode))
+lat.SetNDC(True)
+lat.SetTextSize(22)
+lat.Draw()
+lat = ROOT.TLatex(
+    c.GetLeftMargin() + 0.28,
+    c.GetBottomMargin() + 0.14,
+    'm_brt = %0.3f#times m_{true} + %0.1f'%(slope2,intercept2))
+lat.SetNDC(True)
+lat.SetTextSize(22)
+lat.Draw()
+c.SaveAs('plots/'+ str(args.channel)+'/'+str(my_datetime)+'-linear_fit_{0}_{1}.png'.format(args.level, args.mode))
+
+## Resolution plots 
+
+res_hists_names=['rms_mass_BRT_vs_mass_true', 'res_mass_BRT_vs_mass_true'] 
+res_hists = {}
+for i in res_hists_names:
+    res_hists[i]=ROOT.TGraphErrors()
+    res_hists[i].SetName('rms_mass_BRT_vs_mass_true')
+    res_hists[i].SetMarkerSize(0.8)
+    res_hists[i].SetMarkerColor(2)
+    res_hists[i].SetLineColor(2)
+
+res_hists['rms_mass_BRT_vs_mass_true'].SetMinimum(0)
+res_hists['rms_mass_BRT_vs_mass_true'].SetMaximum(50)
+res_hists['res_mass_BRT_vs_mass_true'].SetMinimum(0)
+res_hists['res_mass_BRT_vs_mass_true'].SetMaximum(0.7)
+
+for p, mass, mean, mean_error, rms, rms_error in zip(range(len(Higgs.MASSES)), Higgs.MASSES, brt_means, brt_mean_errors, brt_rms, brt_rms_error ):
+    res_hists['rms_mass_BRT_vs_mass_true'].SetPoint(p,mass,rms)
+    res_hists['rms_mass_BRT_vs_mass_true'].SetPointError(p,0,rms_error)
+    res_hists['res_mass_BRT_vs_mass_true'].SetPoint(p,mass,rms/mass)
+    res_hists['res_mass_BRT_vs_mass_true'].SetPointError(p,0,math.sqrt(pow(rms_error/mean,2)+pow(rms/(mean*mean)*mean_error,2)))
+
+# Draw the resolution plots
+c = Canvas()
+
+res_hists['rms_mass_BRT_vs_mass_true'].Draw('AP')
+res_hists['rms_mass_BRT_vs_mass_true'].GetXaxis().SetTitle('m_{true} [GeV]')
+res_hists['rms_mass_BRT_vs_mass_true'].GetYaxis().SetTitle('RMS-m_{brt}  [GeV]')
+
+lat = ROOT.TLatex(
+    c.GetLeftMargin() + 0.05,
+    1 - c.GetTopMargin() - 0.15,
+    '{0}-{1}#rightarrowH#rightarrow#tau#tau'.format(args.level, args.mode))
+
+lat.SetNDC(True)
+lat.SetTextSize(32)
+lat.Draw()
+c.SaveAs('plots/'+ str(args.channel)+'/'+str(my_datetime)+'-rms_mass_BRT_vs_mass_true_{0}_{1}.png'.format(args.level, args.mode))
+
+res_hists['res_mass_BRT_vs_mass_true'].Draw('AP')
+res_hists['res_mass_BRT_vs_mass_true'].GetXaxis().SetTitle('m_{true} [GeV]')
+res_hists['res_mass_BRT_vs_mass_true'].GetYaxis().SetTitle('res-m_{brt} ')
+
+lat = ROOT.TLatex(
+    c.GetLeftMargin() + 0.05,
+    1 - c.GetTopMargin() - 0.15,
+    '{0}-{1}#rightarrowH#rightarrow#tau#tau'.format(args.level, args.mode))
+
+lat.SetNDC(True)
+lat.SetTextSize(32)
+lat.Draw()
+c.SaveAs('plots/'+ str(args.channel)+'/'+str(my_datetime)+'-res_mass_BRT_vs_mass_true_{0}_{1}.png'.format(args.level, args.mode))
+c.Clear()
+
+

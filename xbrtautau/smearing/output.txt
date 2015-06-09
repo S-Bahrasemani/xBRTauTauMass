@@ -1,0 +1,25 @@
+TClass::TClass:0: RuntimeWarning: no dictionary for class pair<RooAbsArg*,TRefArray*> is available
+Info in <TCanvas::Print>: png file xtest.png has been created
+143780
+0
+10000
+20000
+30000
+40000
+50000
+60000
+70000
+80000
+90000
+100000
+110000
+120000
+130000
+140000
+41283
+0
+10000
+20000
+30000
+40000
+132569.0 37419.0

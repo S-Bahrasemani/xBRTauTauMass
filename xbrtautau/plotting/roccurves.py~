@@ -1,0 +1,10 @@
+
+
+import ROOT
+from ROOT import TFile, TTree, TCanvas, TGraph
+
+import os
+
+def get_roc_curve(Zpath = 'Z ntuples path', Hpath= 'H125 ntuple path', mode = 'testing mode', channel = 'channel', **kwargs):
+    Zfiles = [Zpath.os.path.join(Zpath, 'ZtautauNp'+str(i)) for i in range(6)]
+

@@ -1,0 +1,318 @@
+
+## A Module to help harmonize tree branches  
+## A List of intresting branches from truth-level trees to harmonize with reco-level trees 
+## BRANCHES = {Oldbranch_name:{new_branch_name : value}, ...}
+
+import os
+import shutil
+
+import ROOT
+import math
+from rootpy.io import root_open
+from rootpy.tree import TreeModel, FloatCol, IntCol
+from rootpy.stl import vector
+from brtautau import parallel
+import logging
+from multiprocessing import Process
+import array
+from brtautau.parallel import run_pool
+from brtautau.categories.features import FEATURES
+log = logging.getLogger('apply-bdt-weights')
+
+
+
+from ROOT import TLorentzVector
+
+from rootpy.tree import TreeModel, FloatCol, IntCol, BoolCol
+from rootpy.vector import LorentzRotation, LorentzVector, Vector3, Vector2
+from rootpy import log
+ignore_warning = log['/ROOT.TVector3.PseudoRapidity'].ignore(
+    '.*transvers momentum.*')
+
+
+class FourMomentum(TreeModel):
+    pt = FloatCol()
+    p = FloatCol()
+    et = FloatCol()
+    e = FloatCol()
+    eta = FloatCol(default=-1111)
+    phi = FloatCol(default=-1111)
+    m = FloatCol()
+
+    @classmethod
+    def set(cls, this, other):
+        if isinstance(other, TLorentzVector):
+            vect = other
+        else:
+            vect = other.fourvect
+        this.pt = vect.Pt()
+        this.p = vect.P()
+        this.et = vect.Et()
+        this.e = vect.E()
+        this.m = vect.M()
+        with ignore_warning:
+            this.phi = vect.Phi()
+            this.eta = vect.Eta()
+
+
+
+
+
+class MMCOutput(FourMomentum.prefix('resonance_')):
+    mass = FloatCol()
+    MET_et = FloatCol()
+    MET_etx = FloatCol()
+    MET_ety = FloatCol()
+    MET_phi = FloatCol()
+
+
+class MMCModel(MMCOutput.prefix('mmc0_'),
+               MMCOutput.prefix('mmc1_'),
+               MMCOutput.prefix('mmc2_')):
+    pass
+
+
+class TrueTau(FourMomentum + FourMomentum.prefix('vis_')):
+    nProng = IntCol(default=-1111)
+    nPi0 = IntCol(default=-1111)
+    charge = IntCol()
+
+    @classmethod
+    def set_vis(cls, this, other):
+        if isinstance(other, TLorentzVector):
+            vect = other
+        else:
+            vect = other.fourvect
+        this.vis_pt = vect.Pt()
+        this.vis_p = vect.P()
+        this.vis_et = vect.Et()
+        this.vis_e = vect.E()
+        this.vis_m = vect.M()
+        with ignore_warning:
+            this.vis_phi = vect.Phi()
+            this.vis_eta = vect.Eta()
+
+
+class MatchedObject(TreeModel):
+    matched = BoolCol()
+    matched_dR = FloatCol(default=1111)
+    #matched_collision = BoolCol()
+    #matched_pdgId = IntCol()
+
+
+
+
+class RecoTau(FourMomentum):
+    index = IntCol(default=-1)
+
+    BDTJetScore = FloatCol()
+    BDTEleScore = FloatCol()
+
+    JetBDTSigLoose = BoolCol()
+    JetBDTSigMedium = BoolCol()
+    JetBDTSigTight = BoolCol()
+    id = IntCol()
+
+    nPi0 = IntCol()
+    seedCalo_numTrack = IntCol()
+    numTrack = IntCol()
+    charge = IntCol()
+    jvtxf = FloatCol()
+    seedCalo_centFrac = FloatCol()
+
+    BCHMedium = BoolCol()
+    BCHTight = BoolCol()
+
+    centrality = FloatCol(default=-1E10)
+    centrality_boosted = FloatCol(default=-1E10)
+
+
+
+
+class RecoJet(FourMomentum):
+    index = IntCol(default=-1)
+    jvtxf = FloatCol()
+    BDTJetScore = FloatCol()
+    BCHMedium = BoolCol()
+    BCHTight = BoolCol()
+
+
+class RecoTauBlock((RecoTau + MatchedObject).prefix('tau1_') +
+                   (RecoTau + MatchedObject).prefix('tau2_')):
+
+    #tau_trigger_match_error = BoolCol(default=False)
+
+    # did both taus come from the same vertex?
+    tau_same_vertex = BoolCol()
+
+    dR_tau1_tau2 = FloatCol()
+    dEta_tau1_tau2 = FloatCol()
+    theta_tau1_tau2 = FloatCol()
+    cos_theta_tau1_tau2 = FloatCol()
+    tau_pt_ratio = FloatCol()
+    # set in hhskim.py
+    dPhi_tau1_tau2 = FloatCol()
+
+    @classmethod
+    def set(cls, event, tree, datatype, tau1, tau2, local=False):
+        tree.theta_tau1_tau2 = abs(tau1.fourvect.Angle(tau2.fourvect))
+        tree.cos_theta_tau1_tau2 = math.cos(tree.theta_tau1_tau2)
+        tree.dR_tau1_tau2 = tau1.fourvect.DeltaR(tau2.fourvect)
+        tree.dEta_tau1_tau2 = abs(tau2.eta - tau1.eta)
+        # leading pt over subleading pt
+        tree.tau_pt_ratio = tau1.pt / tau2.pt
+
+        for outtau, intau in [(tree.tau1, tau1), (tree.tau2, tau2)]:
+
+            outtau.index = intau.index
+            outtau.id = intau.id
+
+            FourMomentum.set(outtau, intau)
+
+            outtau.BDTJetScore = intau.BDTJetScore
+            outtau.BDTEleScore = intau.BDTEleScore
+
+            outtau.JetBDTSigLoose = intau.JetBDTSigLoose
+            outtau.JetBDTSigMedium = intau.JetBDTSigMedium
+            outtau.JetBDTSigTight = intau.JetBDTSigTight
+
+            outtau.nPi0 = intau.nPi0
+
+
+
+
+class METModel(TreeModel):
+    MET_et = FloatCol()
+    MET_etx = FloatCol()
+    MET_ety = FloatCol()
+    MET_sumet = FloatCol()
+    MET_phi = FloatCol()
+    MET_sig = FloatCol()
+
+    MET_et_original = FloatCol()
+    MET_etx_original = FloatCol()
+    MET_ety_original = FloatCol()
+    MET_sumet_original = FloatCol()
+    MET_phi_original = FloatCol()
+
+    dPhi_tau1_MET = FloatCol()
+    dPhi_tau2_MET = FloatCol()
+    dPhi_min_tau_MET = FloatCol()
+    MET_bisecting = BoolCol()
+
+    MET_centrality = FloatCol(default=-1E10)
+    MET_centrality_boosted = FloatCol(default=-1E10)
+
+
+
+
+
+
+
+class AddBranch(TreeModel):
+    def __init__(taus = 'list of visible taus decay ', jets ='jets list', **kwargs):
+        self.taus = taus
+        self.jets = jets
+
+    
+
+
+old_br_list = []
+new_br_list = []
+
+BRANCHES = {
+
+   'tau1_pt':{ 
+        'new_name': 'tau1_pt'
+        'old_name':'evtsel_tau_et', 
+        'old_scale':1
+        'new_scale':1000
+        'default':None
+        'value' : ' new_scale/old_scale *event.evtsel_tau_et'     
+}
+
+ 
+   {'tau1_eta'] = 
+   {'tau1_phi'] = 
+   {'tau1_m'] = 
+
+   {'tau2_pt'] = 
+   {'tau2_eta'] = 
+   {'tau2_phi'] = 
+   {'tau2_m'] = 
+
+ 
+   {'MET_et '] = 
+   {'MET_phi '] = 
+
+   {'jet1_pt '] =  
+   {'jet1_eta '] =  
+   {'jet1_phi '] =  
+   {'jet1_m '] =  
+
+   {'jet2_pt '] =  
+   {'jet2_eta '] =  
+   {'jet2_phi '] =  
+   {'jet2_m '] =  
+
+   {'jet3_pt '] =  
+   {'jet3_eta '] =  
+   {'jet3_phi '] =  
+   {'jet3_m '] =  
+
+
+
+   ## Taus Block
+
+   {'dR_tau1_tau2 '] = 
+   {'dEta_tau1_tau2 '] = 
+   {'dPhi_tau1_tau2 '] = 
+
+   {'dPhi_tau1_tau2_MET'] = 
+   {'dPhi_tau1_MET'] = 
+   {'dPhi_tau2_MET'] = 
+   {'dPhi_min_tau_MET '] = 
+
+
+   vector_sum_pt_tau1_tau2= FloatCol()
+   sum_pt_tau1_tau2= FloatCol()
+   vector_sum_pt_tau1_tau2_met = FloatCol()
+   sum_pt_tau1_tau2_met= FloatCol()
+
+   transverse_mass_tau1_tau2 = FloatCol()
+   transverse_mass_tau1_met = FloatCol()
+   transverse_mass_tau2_met = FloatCol()
+   mass_tau1_tau2_jet1 =FloatCol(default = -999.)
+   mass_vis_tau1_tau2 = FloatCol()
+   mass_collinear_tau1_tau2 = FloatCol()
+
+   theta_tau1_tau2 = FloatCol()
+   cos_theta_tau1_tau2 = FloatCol()
+
+   tau_pt_ratio = FloatCol()
+   met_phi_centrality = FloatCol()
+   pt_diff_tau1_tau2 = FloatCol()
+
+    # tau1, tau2, met, jet1, jet2 variables
+   sum_pt = FloatCol()
+   #sum_pt_full = FloatCol(default =-999.)
+   #vector_sum_pt  = FloatCol(default=-999.)
+  #vector_sum_pt_full = FloatCol(default =-999.)
+
+
+   true_resonance_pt = FloatCol()
+   resonance_pt = FloatCol()
+
+   ### JETS KINEMATICS
+
+   dEta_jets = FloatCol(default=-999.)
+   eta_product_jets = FloatCol(default=-999.)
+   #eta_product_jets_boosted = FloatCol(default=-999.)
+   mass_jet1_jet2 = FloatCol(default=-999.)
+
+   ### EVENT
+   mmc1_resonance_m = FloatCol()
+   hadhad = IntCol()
+   lephad = IntCol()
+   leplep = IntCol()
+   numJets = IntCol()

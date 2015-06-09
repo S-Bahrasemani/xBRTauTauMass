@@ -1,0 +1,156 @@
+#!/usr/bin/env python
+import os
+import logging
+import re
+import datetime
+import rootpy
+from rootpy.plotting.style import set_style
+from rootpy.tree import Cut
+
+from brtautau.variables import VARIABLES
+from brtautau.samples import *
+
+from brtautau.categories.truth import Category_Preselection_TH, Category_Preselection_TH_LH
+
+from brtautau.categories.mva import *
+
+from brtautau.plotting import draw_hists
+log = logging.getLogger(os.path.basename(__file__))
+
+set_style('ATLAS', shape='rect')
+
+
+from argparse import ArgumentParser
+parser = ArgumentParser()
+parser.add_argument('--var', default=None, help='Specify a particular variable')
+parser.add_argument('--logy', default=False, action='store_true')
+parser.add_argument('--cut', default=None, type=str, help='additional cut to apply')
+parser.add_argument('--mode', default='VBF', type=str, choices=['VBF', 'gg'])
+parser.add_argument('--level', default='truth', type=str, choices=['reco', 'truth', 'mix'])
+parser.add_argument('--channel', default='lephad', type=str, choices=['lephad', 'hadhad'])
+parser.add_argument('--TrainMode', default='VBF', type=str, choices=['VBF', 'gg'])
+
+args = parser.parse_args()
+date = datetime.date.today()
+date = date.strftime("%m%d%y")
+
+#####################  SETTINGS  ####################
+
+## Location of flat ntuples
+
+NTUPLE_PATH = 'ntuples/'
+
+if args.level == 'truth' and args.channel =='lephad':
+    if args.TrainMode == 'VBF':
+        NtuplesPath_H = NTUPLE_PATH + '/TRUTH-H/with_LH_VBF_train'
+    if args.TrainMode == 'gg':
+        NtuplesPath_H = NTUPLE_PATH + '/TRUTH-H/with_LH_gg_train'
+
+if args.level == 'truth' and args.channel =='hadhad':
+    if args.TrainMode == 'VBF':
+        NtuplesPath_H = NTUPLE_PATH + '/TRUTH-H/with_HH_VBF_train'
+    if args.TrainMode == 'gg':
+        NtuplesPath_H = NTUPLE_PATH + '/TRUTH-H/with_HH_gg_train'
+
+
+if args.level == 'reco' and args.channel =='hadhad':
+    if args.TrainMode == 'gg':
+        NtuplesPath_H = NTUPLE_PATH + "/HADHAD/H/weighted_gg_train"
+        NtuplesPath_Z = NTUPLE_PATH + "/HADHAD/Z/weighted_gg_train"
+    elif  args.TrainMode == 'VBF':
+        NtuplesPath_H = NTUPLE_PATH + "/HADHAD/H/weighted_VBF_train"
+        NtuplesPath_Z = NTUPLE_PATH + "/HADHAD/Z/weighted_VBF_train"
+
+if args.level == 'reco' and args.channel =='lephad':
+    if  args.TrainMode == 'gg':
+        NtuplesPath_H = NTUPLE_PATH + "/LEPHAD/H/weighted_gg_train"
+        NtuplesPath_Z = NTUPLE_PATH + "/LEPHAD/Z/weighted_gg_train"
+    elif  args.TrainMode == 'VBF':
+        NtuplesPath_H = NTUPLE_PATH + "/LEPHAD/H/weighted_VBF_train"
+        NtuplesPath_Z = NTUPLE_PATH + "/LEPHAD/Z/weighted_VBF_train"
+
+## Preselection and Category cuts:
+
+if args.channel == 'lephad' and args.level == 'reco':
+    if args.mode =='VBF':
+        cat = Category_Preselection_LH
+        cuts = Category_VBF.cuts_lh
+    if args.mode =='gg':
+        cat = Category_Preselection_LH
+
+
+if args.channel == 'hadhad' and args.level == 'reco':
+
+    if args.mode =='VBF':
+        cat = Category_Preselection
+    if  args.mode =='gg':
+        cat = Category_Preselection_LH
+
+if args.level =='truth' and args.channel =='hadhad':
+    cat = Category_Preselection_TH
+if args.level =='truth' and args.channel =='lephad':
+    cat = Category_Preselection_TH_LH
+
+
+
+##cat = None
+##cuts = None
+if args.cut:
+    cuts = Cut(args.cut)
+    
+
+vars = VARIABLES
+if args.var is not None:
+    if args.var in VARIABLES:
+        vars = {args.var: VARIABLES[args.var]}
+    else:
+        raise RuntimeError('Wrong key (see variables.py)')
+
+for mass in [100, 125, 150]:
+
+    higgs_100_truth = Higgs(ntuple_path = NTUPLE_PATH + 'TRUTH-H/with_LH_VBF_train', mass=mass, mode=args.mode, level = 'truth', treename='Tree')
+    higgs_100_reco = Higgs(ntuple_path = NTUPLE_PATH + 'LEPHAD/H/weighted_VBF_train', mass=mass, mode=args.mode, level = 'reco', treename='Tree')
+
+    cat_truth = Category_Preselection_TH_LH
+    cat_reco = Category_Preselection_LH
+
+    field_hists = higgs_100_truth.get_field_hist(vars)
+    
+    hists_100_truth = higgs_100_truth.get_hist_array(field_hists, cat_truth, cuts=args.cut)
+    hists_100_reco = higgs_100_reco.get_hist_array(field_hists, cat_reco, cuts=args.cut)
+
+    for field, va_ in field_hists.items():
+        h_100_truth = hists_100_truth[field]
+        h_100_reco = hists_100_reco[field]
+        Hists = [h_100_truth, h_100_reco]
+        print  isinstance(Hists, (list, tuple))
+        print [h_100_reco.GetBinContent(h_100_reco.GetMaximumBin())]
+
+        plot = draw_hists(Hists, field, cat_reco, logy=args.logy, unit_area=True)
+        log.info(plot)
+        if args.logy:
+            plot.SaveAs(os.path.join('plots/variables', str(date)+'-lineshape_'+field+ '_'+str(mass)+'_'+cat_reco.name+'_logy_{0}_{1}_{2}.png'.format(args.level, args.TrainMode, args.channel)))
+        else: 
+            plot.SaveAs(os.path.join('plots/variables', str(date)+'-lineshape_'+field+ '_' +str(mass)+'_'+cat_reco.name+'_{0}_{1}_{2}.png'.format(args.level, args.TrainMode, args.channel)))
+
+                               
+## ADDING truth and reco hists on same plot
+
+
+# higgs_100_truth = Higgs(ntuple_path = NtuplesPath_H, mass=100, mode=args.mode, level = args.level, treename='Tree')
+# higgs_125_truth = Higgs(ntuple_path = NtuplesPath_H, mass=125, mode=args.mode, level = args.level, treename='Tree')
+# higgs_150_truth = Higgs(ntuple_path = NtuplesPath_H, mass=150, mode=args.mode, level = args.level, treename='Tree')
+
+# higgs_100_truth = Higgs(ntuple_path = NtuplesPath_H, mass=100, mode=args.mode, level = args.level, treename='Tree')
+# higgs_125_truth = Higgs(ntuple_path = NtuplesPath_H, mass=125, mode=args.mode, level = args.level, treename='Tree')
+# higgs_150_truth = Higgs(ntuple_path = NtuplesPath_H, mass=150, mode=args.mode, level = args.level, treename='Tree')
+
+
+
+
+# field_hists = higgs_100_truth.get_field_hist(vars)
+# hists_100 = higgs_100.get_hist_array(field_hists, cat, cuts=args.cut)
+# hists_125 = higgs_125.get_hist_array(field_hists, cat, cuts=args.cut)
+# hists_150 = higgs_150.get_hist_array(field_hists, cat, cuts=args.cut)
+
+
